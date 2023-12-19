@@ -1,0 +1,71 @@
+
+local GameSession = {
+	players = {},
+	port = 8080,
+	isRunning = false,
+	server = nil,
+}
+
+function GameSession:new()
+	local obj = {}
+	setmetatable(obj, self)
+	self.__index = self
+	return obj
+end
+
+function GameSession:start()
+	self.server = assert(socket.bind("*", self.port))
+	self.server:settimeout(0)
+	self.isRunning = true
+	print("Server started on port " .. self.port)
+end
+
+function GameSession:update(dt)
+	local client = self.server:accept()
+	if client then
+		client:settimeout(0)
+		self:addPlayer(client)
+		print("New client connected")
+	end
+
+	for _, player in pairs(self.players) do
+		local input = player:receiveInputFromServer()
+		player:handleInput(input)
+	end
+
+end
+
+function GameSession:addPlayer(client)
+	local newPlayer = {}
+	newPlayer.client = client 
+	self.players[client] = newPlayer
+end
+
+function GameSession:removePlayer(client)
+	local player = self.players[client]
+	if player then
+		player:on_disconnect()
+		self.players[client] = nil
+	end
+end
+
+function GameSession:update_player(client, dt, input)
+	local player = self.players[client]
+	if player then
+		player:update(dt)
+		player:on_input(input.action_id, input.action)
+	end
+end
+
+function GameSession:on_input(client, input)
+	local player = self.players[client]
+	if player then
+		player:on_input(input.action_id, input.action)
+	end
+end
+
+function GameSession:disconnect_player(client)
+	self:removePlayer(client)
+end
+
+return GameSession

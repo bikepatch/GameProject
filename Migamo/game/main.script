@@ -1,0 +1,14 @@
+local GameSession = require("game_session")
+
+function init(self)
+	self.session = GameSession.new()
+	self.session:startServer()
+end
+
+function update(self, dt)
+	self.session:update(dt)
+end
+
+function final(self)
+	self.session:stopServer()
+end
