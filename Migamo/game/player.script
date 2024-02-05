@@ -1,3 +1,6 @@
+local json = require "json"
+local websocket = require ("websocket.websocket")
+
 local air_acceleration_factor = 0.8
 local max_speed = 450
 local gravity = -1900
@@ -14,37 +17,96 @@ local anim_idle = hash("idle")
 local anim_jump = hash("jump")
 local anim_fall = hash("fall")
 
-local socket = require "socket"
 
-local clientSocket = socket.tcp()
-clientSocket:settimeout(0)
+local ws_connection = nil
 
-function connectToServer(ip, port)
-	local success, err = clientSocket:connect(ip, port)
-	if not success then
-		print("Connection error: " .. err)
-	else
-		print("Connected to server")
+local other_players = {}
+
+function connectToServer(url)
+	ws_connection = websocket.create(url)
+
+	function ws_connection.on_open()
+		print("Connected to server via WebSocket")
 	end
+
+	function ws_connection.on_message(message)
+		print("Received message: " .. message)
+		local data = json.decode(message)
+		if data then
+			on_input(data.action_id, data.action)
+		end
+	end
+
+	function ws_connection.on_close()
+		print("WebSocket connection closed")
+	end
+
+	function ws_connection.on_error(error)
+		print("WebSocket error: " .. error)
+	end
+
+	ws_connection.connect()
 end
 
 function sendInputToServer(action_id, action)
-	if clientSocket then
-		clientSocket:send(action_id, action)
+	if ws_connection then
+		local op = {
+			player_id = sys.get_save_file("my_game", "player_id"),
+			action = action_id,
+			op_id = tostring(socket.gettime()),
+			timestamp = os.time()
+		}
+		local message = json.encode(op)
+		ws_connection.send(message)
 	else
-		print("Socket not initialized")
+		print("WebSocket not initialized")
 	end
 end
 
-function receiveInputFromServer()
-	local response, err = clientSocket:receive()
-	if response then
-		local action_id, action = json.decode(response)
-		on_input(action_id, action)
+function createOtherPlayer(player_id)
+	local pos = vmath.vector3(100, 100, 0) 
+	local player_go = factory.create("#player_factory", pos)
+	other_players[player_id] = player_go
+	return player_go
+end
+
+function moveOtherPlayer(player_go, action)
+	local direction = action == "MoveLeft" and -1 or 1
+	local player_pos = go.get_position(player_go)
+	player_pos.x = player_pos.x + direction * max_speed * air_acceleration_factor
+	go.set_position(player_pos, player_go)
+end
+
+function jumpOtherPlayer(player_go)
+	local player_pos = go.get_position(player_go)
+	player_pos.y = player_pos.y + jump_takeoff_speed
+	go.set_position(player_pos, player_go)
+end
+
+function removeOtherPlayer(player_id)
+	if other_players[player_id] then
+		go.delete(other_players[player_id])
+		other_players[player_id] = nil
+	end
+end
+
+function applyOperation(op)
+	local player_go = other_players[op.player_id]
+	if not player_go then
+		player_go = createOtherPlayer(op.player_id)
+	end
+
+	if op.action == "MoveLeft" or op.action == "MoveRight" then
+		moveOtherPlayer(player_go, op.action)
+	elseif op.action == "Jump" then
+		jumpOtherPlayer(player_go)
+	elseif op.action == "remove" then
+		removeOtherPlayer(op.player_id)
 	end
 end
 
 function init(self)
+	print("Initializing player...")
 	msg.post(".", "acquire_input_focus")
 	msg.post("#camera", "acquire_camera_focus")
 	msg.post("@render:", "use_camera_projection")
@@ -54,7 +116,7 @@ function init(self)
 	self.correction = vmath.vector3()
 	self.ground_contact = false
 	self.anim = nil
-	--connectToServer(127.0.0.1, 8080)
+	connectToServer("ws://127.0.0.1:8080")
 end
 
 function play_animation(self, anim)
@@ -149,7 +211,7 @@ function on_message(self, message_id, message, sender)
 end
 
 function on_input(self, action_id, action)
-	--sendInputToServer(action_id, action)
+	sendInputToServer(action_id, action)
 	handle_input(self, action_id, action)
 end
 
